@@ -130,6 +130,337 @@ def volume_info(volume):
     )
 
 
+def format_measurement(value):
+    return f"{value:.4g}"
+
+
+def case_summary_items(volume, slice_idx, torch_status, config_name):
+    depth, height, width = volume.array.shape
+    spacing = volume.image.GetSpacing()
+    device = torch_status["device"].upper()
+    device_detail = "Ready" if torch_status["available"] else "Unavailable"
+    return [
+        ("Case", basename(volume.path), "Loaded"),
+        ("Dimensions", f"{depth} x {height} x {width}", "(D x H x W)"),
+        (
+            "Spacing",
+            " x ".join(format_measurement(value) for value in spacing),
+            "mm",
+        ),
+        ("Slice", f"{int(slice_idx)} / {depth - 1}", "Current axial index"),
+        ("Device", device, device_detail),
+        ("Model", config_name, "Checkpoint selected"),
+    ]
+
+
+def mask_summary(state):
+    mask = state["mask"]
+    voxels = int(np.count_nonzero(mask))
+    spacing = state["volume"].image.GetSpacing()
+    volume_cm3 = round(voxels * float(np.prod(spacing)) / 1000.0, 3)
+    coverage = round((voxels / float(mask.size)) * 100.0, 2) if mask.size else 0.0
+    return {
+        "voxels": voxels,
+        "volume_cm3": volume_cm3,
+        "coverage": coverage,
+    }
+
+
+def product_css():
+    return """
+    <style>
+    :root {
+        --med-bg: #f5f8fb;
+        --med-panel: #ffffff;
+        --med-panel-soft: #eef5f8;
+        --med-ink: #132233;
+        --med-muted: #647487;
+        --med-border: #d9e3ea;
+        --med-blue: #1f6feb;
+        --med-cyan: #1f9bb4;
+        --med-green: #198754;
+        --med-orange: #e86134;
+        --med-shadow: 0 18px 46px rgba(24, 39, 58, 0.10);
+    }
+    .stApp {
+        background: var(--med-bg);
+        color: var(--med-ink);
+    }
+    .block-container {
+        padding-top: 2.8rem;
+        padding-bottom: 2.4rem;
+        max-width: 1480px;
+    }
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #eef5f8 0%, #e8eef4 100%);
+        border-right: 1px solid var(--med-border);
+    }
+    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
+    [data-testid="stSidebar"] label {
+        color: var(--med-ink);
+    }
+    h1, h2, h3 {
+        letter-spacing: 0;
+        color: var(--med-ink);
+    }
+    .med-app-header {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 24px;
+        margin-bottom: 18px;
+        padding-bottom: 18px;
+        border-bottom: 1px solid var(--med-border);
+    }
+    .med-app-header h1 {
+        margin: 0;
+        font-size: 2.15rem;
+        line-height: 1.1;
+        font-weight: 760;
+    }
+    .med-header-note {
+        color: var(--med-muted);
+        font-size: 0.9rem;
+        text-align: right;
+        max-width: 360px;
+    }
+    .med-sidebar-title {
+        font-size: 1.05rem;
+        font-weight: 760;
+        margin: 0.4rem 0 0.9rem;
+    }
+    .med-section-label {
+        color: var(--med-muted);
+        font-size: 0.74rem;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        margin: 1.2rem 0 0.45rem;
+    }
+    .med-runtime {
+        border: 1px solid rgba(31, 155, 180, 0.28);
+        background: #e7f6f2;
+        border-radius: 8px;
+        padding: 12px 13px;
+        margin-bottom: 14px;
+        color: #0f5d44;
+        font-size: 0.86rem;
+        font-weight: 650;
+    }
+    .med-runtime.offline {
+        border-color: rgba(220, 53, 69, 0.24);
+        background: #fff0f1;
+        color: #a32635;
+    }
+    .med-summary-grid {
+        display: grid;
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+        gap: 10px;
+        margin: 12px 0 20px;
+    }
+    .med-summary-item {
+        background: var(--med-panel);
+        border: 1px solid var(--med-border);
+        border-radius: 8px;
+        padding: 12px 13px;
+        box-shadow: 0 10px 22px rgba(24, 39, 58, 0.045);
+        min-height: 86px;
+    }
+    .med-summary-label {
+        color: var(--med-muted);
+        font-size: 0.72rem;
+        font-weight: 760;
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        margin-bottom: 8px;
+    }
+    .med-summary-value {
+        color: var(--med-ink);
+        font-size: 1.03rem;
+        line-height: 1.2;
+        font-weight: 780;
+        overflow-wrap: anywhere;
+    }
+    .med-summary-detail {
+        color: var(--med-muted);
+        font-size: 0.78rem;
+        margin-top: 5px;
+    }
+    .med-workflow {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px;
+        margin: 2px 0 16px;
+    }
+    .med-workflow-step {
+        border: 1px solid var(--med-border);
+        background: rgba(255, 255, 255, 0.72);
+        border-radius: 8px;
+        padding: 10px 12px;
+        color: var(--med-muted);
+        font-size: 0.82rem;
+        font-weight: 700;
+    }
+    .med-workflow-step.active {
+        border-color: rgba(31, 111, 235, 0.34);
+        background: #eef5ff;
+        color: var(--med-blue);
+    }
+    .med-viewer-title {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        margin-top: 4px;
+        margin-bottom: 8px;
+    }
+    .med-viewer-title h2 {
+        margin: 0;
+        font-size: 1.08rem;
+        font-weight: 760;
+    }
+    .med-viewer-caption {
+        color: var(--med-muted);
+        font-size: 0.82rem;
+        margin-bottom: 10px;
+    }
+    .med-panel-note {
+        border-left: 3px solid var(--med-blue);
+        background: #f0f6ff;
+        color: #1b4f99;
+        padding: 10px 12px;
+        border-radius: 7px;
+        margin: 12px 0;
+        font-size: 0.88rem;
+    }
+    .med-panel-note.warn {
+        border-left-color: var(--med-orange);
+        background: #fff6ed;
+        color: #8a431e;
+    }
+    .med-empty {
+        background: var(--med-panel);
+        border: 1px dashed #b8c7d4;
+        border-radius: 8px;
+        padding: 34px;
+        margin-top: 18px;
+        box-shadow: var(--med-shadow);
+    }
+    .med-empty h2 {
+        margin: 0 0 8px;
+        font-size: 1.35rem;
+    }
+    .med-empty p {
+        color: var(--med-muted);
+        margin: 0;
+        max-width: 720px;
+    }
+    .med-results {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+        margin-top: 12px;
+    }
+    .med-result-item {
+        background: #0f1b27;
+        border: 1px solid #263746;
+        border-radius: 8px;
+        padding: 11px 12px;
+    }
+    .med-result-label {
+        color: #95a7b8;
+        font-size: 0.72rem;
+        font-weight: 760;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+    }
+    .med-result-value {
+        color: #f3f8fb;
+        font-size: 1.05rem;
+        font-weight: 780;
+        margin-top: 5px;
+    }
+    div[data-testid="stImage"] img,
+    iframe[title="streamlit_drawable_canvas.st_canvas"] {
+        border-radius: 8px;
+        border: 1px solid #111827;
+        box-shadow: 0 18px 48px rgba(14, 27, 39, 0.16);
+        background: #02060a;
+    }
+    .stButton > button,
+    .stDownloadButton > button {
+        border-radius: 7px;
+        font-weight: 750;
+        min-height: 2.55rem;
+    }
+    @media (max-width: 1100px) {
+        .med-summary-grid {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+        .med-workflow {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .med-app-header {
+            display: block;
+        }
+        .med-header-note {
+            text-align: left;
+            margin-top: 8px;
+        }
+    }
+    @media (max-width: 720px) {
+        .block-container {
+            padding-top: 1.2rem;
+        }
+        .med-summary-grid,
+        .med-results {
+            grid-template-columns: 1fr;
+        }
+        .med-workflow {
+            grid-template-columns: 1fr;
+        }
+        .med-app-header h1 {
+            font-size: 1.55rem;
+        }
+    }
+    </style>
+    """
+
+
+def render_metric_grid(items):
+    cards = []
+    for label, value, detail in items:
+        cards.append(
+            f"""
+            <div class="med-summary-item">
+                <div class="med-summary-label">{label}</div>
+                <div class="med-summary-value">{value}</div>
+                <div class="med-summary-detail">{detail}</div>
+            </div>
+            """
+        )
+    return f'<div class="med-summary-grid">{"".join(cards)}</div>'
+
+
+def render_mask_summary(summary):
+    return f"""
+    <div class="med-results">
+        <div class="med-result-item">
+            <div class="med-result-label">Mask voxels</div>
+            <div class="med-result-value">{summary["voxels"]:,}</div>
+        </div>
+        <div class="med-result-item">
+            <div class="med-result-label">Volume</div>
+            <div class="med-result-value">{summary["volume_cm3"]:.3f} cm3</div>
+        </div>
+        <div class="med-result-item">
+            <div class="med-result-label">Coverage</div>
+            <div class="med-result-value">{summary["coverage"]:.2f}%</div>
+        </div>
+    </div>
+    """
+
+
 def create_session_state(volume):
     return {
         "volume": volume,
@@ -222,8 +553,25 @@ def get_streamlit_canvas():
 def main():
     import streamlit as st
 
-    st.set_page_config(page_title="MedSAM2 NIfTI Segmentation", layout="wide")
-    st.title("MedSAM2 NIfTI Interactive Segmentation")
+    st.set_page_config(
+        page_title="MedSAM2 NIfTI Studio",
+        layout="wide",
+        initial_sidebar_state="collapsed",
+    )
+    st.markdown(product_css(), unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div class="med-app-header">
+            <div>
+                <h1>NIfTI Interactive Segmentation</h1>
+            </div>
+            <div class="med-header-note">
+                Clinical imaging workspace for box-prompted 3D propagation and mask export.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     if not CONFIG_MAP:
         st.error("No config files found under sam2/configs.")
@@ -238,17 +586,23 @@ def main():
         st.session_state.upload_workspace = tempfile.mkdtemp(prefix="medsam2_upload_")
 
     torch_status = get_torch_status()
-    if torch_status["available"]:
-        st.sidebar.success(
-            f"PyTorch {torch_status['version']} | default device: {torch_status['device']}"
-        )
-    else:
-        st.sidebar.error("PyTorch failed to load. Segmentation is disabled in this Python environment.")
-        with st.sidebar.expander("PyTorch error"):
-            st.code(torch_status["error"])
-
     with st.sidebar:
-        uploaded_file = st.file_uploader("Input NIfTI (.nii.gz)")
+        st.markdown('<div class="med-sidebar-title">Control Console</div>', unsafe_allow_html=True)
+        runtime_class = "med-runtime" if torch_status["available"] else "med-runtime offline"
+        runtime_text = (
+            f'PyTorch {torch_status["version"]} | default device: {torch_status["device"]}'
+            if torch_status["available"]
+            else "PyTorch unavailable | segmentation disabled"
+        )
+        st.markdown(f'<div class="{runtime_class}">{runtime_text}</div>', unsafe_allow_html=True)
+        if not torch_status["available"]:
+            with st.expander("PyTorch error"):
+                st.code(torch_status["error"])
+
+        st.markdown('<div class="med-section-label">Data</div>', unsafe_allow_html=True)
+        uploaded_file = st.file_uploader("Input NIfTI (.nii.gz)", label_visibility="visible")
+
+        st.markdown('<div class="med-section-label">Model</div>', unsafe_allow_html=True)
         config_choices = list(CONFIG_MAP.keys())
         checkpoint_choices = list(CHECKPOINT_MAP.keys())
         default_config = select_default_name(config_choices, DEFAULT_CONFIG_NAME)
@@ -286,17 +640,25 @@ def main():
                     st.session_state.nii_state = None
                     st.error(str(exc))
 
+        st.markdown('<div class="med-section-label">Session</div>', unsafe_allow_html=True)
         if st.session_state.nii_state is not None and st.button("Reset Mask"):
             reset_mask(st.session_state.nii_state)
             st.info("Mask reset.")
 
     state = st.session_state.nii_state
     if state is None:
-        st.info("Upload a .nii.gz volume from the sidebar to begin.")
+        st.markdown(
+            """
+            <div class="med-empty">
+                <h2>Load a NIfTI volume to start</h2>
+                <p>Use the control console to import a .nii.gz study, confirm the model and device, then draw one rectangle on the target slice to run MedSAM2 propagation.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         return
 
     volume = state["volume"]
-    st.caption(volume_info(volume))
 
     max_slice = int(volume.array.shape[0] - 1)
     slice_idx = st.slider(
@@ -307,6 +669,25 @@ def main():
         step=1,
         key="slice_idx",
     )
+    st.markdown(
+        render_metric_grid(
+            case_summary_items(volume, slice_idx, torch_status, config_name)
+        ),
+        unsafe_allow_html=True,
+    )
+    mask_stats = mask_summary(state)
+    has_mask = mask_stats["voxels"] > 0
+    st.markdown(
+        f"""
+        <div class="med-workflow">
+            <div class="med-workflow-step active">1. Review slice</div>
+            <div class="med-workflow-step {'active' if True else ''}">2. Draw target box</div>
+            <div class="med-workflow-step {'active' if state.get("last_bbox") else ''}">3. Segment volume</div>
+            <div class="med-workflow-step {'active' if has_mask else ''}">4. Export mask</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     prompt_rgb = image_for_slice(state, slice_idx, with_mask=False)
     overlay_rgb = image_for_slice(state, slice_idx, with_mask=True)
@@ -315,8 +696,15 @@ def main():
 
     prompt_col, overlay_col = st.columns(2)
     with prompt_col:
-        st.subheader("Prompt")
-        st.caption("Draw one rectangle around the target. Wait for Current box to appear before clicking Segment.")
+        st.markdown(
+            """
+            <div class="med-viewer-title">
+                <h2>Prompt Viewer</h2>
+            </div>
+            <div class="med-viewer-caption">Draw one rectangle around the target. Wait for the box coordinates before running segmentation.</div>
+            """,
+            unsafe_allow_html=True,
+        )
         st_canvas = get_streamlit_canvas()
         bbox = None
         if st_canvas is not None:
@@ -338,9 +726,15 @@ def main():
                         display_size=display_size,
                         source_shape=prompt_rgb.shape,
                     )
-                    st.caption(f"Current box: {bbox.tolist()}")
+                    st.markdown(
+                        f'<div class="med-panel-note">Current box: {bbox.tolist()}</div>',
+                        unsafe_allow_html=True,
+                    )
                 except ValueError as exc:
-                    st.warning(str(exc))
+                    st.markdown(
+                        f'<div class="med-panel-note warn">{str(exc)}</div>',
+                        unsafe_allow_html=True,
+                    )
         else:
             st.image(prompt_rgb, caption="Install streamlit-drawable-canvas for drawing.")
             st.warning("streamlit-drawable-canvas is not installed. Enter a box manually.")
@@ -378,8 +772,17 @@ def main():
                         st.error(str(exc))
 
     with overlay_col:
-        st.subheader("Mask overlay")
+        st.markdown(
+            """
+            <div class="med-viewer-title">
+                <h2>Segmentation Overlay</h2>
+            </div>
+            <div class="med-viewer-caption">Current slice overlay and latest propagated mask statistics.</div>
+            """,
+            unsafe_allow_html=True,
+        )
         st.image(overlay_rgb, caption="Current slice overlay")
+        st.markdown(render_mask_summary(mask_stats), unsafe_allow_html=True)
         if state.get("output_path") and os.path.exists(state["output_path"]):
             with open(state["output_path"], "rb") as handle:
                 st.download_button(

@@ -2,6 +2,7 @@ import io
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import nii_app
@@ -63,6 +64,37 @@ class NiftiAppTests(unittest.TestCase):
 
     def test_select_default_name_falls_back_to_first_choice(self):
         self.assertEqual(nii_app.select_default_name(["first", "second"], "missing"), "first")
+
+    def test_case_summary_items_formats_loaded_volume_for_header(self):
+        volume = SimpleNamespace(
+            path="C:/data/ct.nii.gz",
+            array=SimpleNamespace(shape=(162, 512, 512)),
+            image=SimpleNamespace(GetSpacing=lambda: (0.8, 0.8, 2.0)),
+        )
+        torch_status = {"device": "cuda", "available": True}
+
+        items = nii_app.case_summary_items(volume, 81, torch_status, "sam2.1_hiera_t512")
+
+        self.assertEqual(items[0], ("Case", "ct.nii.gz", "Loaded"))
+        self.assertIn(("Dimensions", "162 x 512 x 512", "(D x H x W)"), items)
+        self.assertIn(("Spacing", "0.8 x 0.8 x 2", "mm"), items)
+        self.assertIn(("Slice", "81 / 161", "Current axial index"), items)
+        self.assertIn(("Device", "CUDA", "Ready"), items)
+        self.assertIn(("Model", "sam2.1_hiera_t512", "Checkpoint selected"), items)
+
+    def test_mask_summary_calculates_volume_voxels_and_coverage(self):
+        mask = nii_app.np.zeros((2, 4, 4), dtype=nii_app.np.uint8)
+        mask[:, :2, :2] = 1
+        state = {
+            "mask": mask,
+            "volume": SimpleNamespace(image=SimpleNamespace(GetSpacing=lambda: (1.0, 1.0, 2.0))),
+        }
+
+        summary = nii_app.mask_summary(state)
+
+        self.assertEqual(summary["voxels"], 8)
+        self.assertEqual(summary["volume_cm3"], 0.016)
+        self.assertEqual(summary["coverage"], 25.0)
 
 
 if __name__ == "__main__":
