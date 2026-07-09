@@ -1,7 +1,6 @@
-from glob import glob
 from tqdm import tqdm
 import os
-from os.path import join, basename
+from os.path import join
 import re
 import matplotlib.pyplot as plt
 from collections import OrderedDict
@@ -11,11 +10,9 @@ import argparse
 
 import SimpleITK as sitk
 import torch
-import torch.multiprocessing as mp
 from inference_utils import normalize_volume_to_uint8, prepare_video_volume
 from sam2.build_sam import build_sam2_video_predictor_npz
-import SimpleITK as sitk
-from skimage import measure, morphology
+from skimage import measure
 
 torch.set_float32_matmul_precision('high')
 torch.manual_seed(2024)

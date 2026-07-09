@@ -3,7 +3,6 @@ import unittest
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from sam2.modeling.sam2_base import SAM2Base
 from sam2.build_sam import build_sam2_video_predictor
 from sam2.utils.transforms import SAM2Transforms
 from sam2.modeling.sam2_utils import get_1d_sine_pe

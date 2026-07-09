@@ -5,13 +5,10 @@
 # LICENSE file in the root directory of this source tree.
 
 import glob
-import logging
 import os
 from dataclasses import dataclass
 
 from typing import List, Optional
-
-import pandas as pd
 
 import torch
 import numpy as np

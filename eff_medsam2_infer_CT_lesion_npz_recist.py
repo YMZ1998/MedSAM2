@@ -13,8 +13,6 @@ from efficient_track_anything.build_efficienttam import (
 )
 
 from glob import glob
-from tqdm import tqdm
-import os
 from os.path import join, basename
 import matplotlib.pyplot as plt
 from collections import OrderedDict
@@ -22,12 +20,9 @@ import pandas as pd
 import numpy as np
 import random
 import argparse
-from datetime import datetime
 import time
 
 import SimpleITK as sitk
-import torch
-import torch.multiprocessing as mp
 from inference_utils import prepare_video_volume
 from huggingface_hub import hf_hub_download
 import warnings

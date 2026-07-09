@@ -11,10 +11,8 @@ import torch
 import torch.distributed
 from sam2.modeling.sam2_base import SAM2Base
 from sam2.modeling.sam2_utils import (
-    get_1d_sine_pe,
     get_next_point,
     sample_box_points,
-    select_closest_cond_frames,
 )
 
 from sam2.utils.misc import concat_points

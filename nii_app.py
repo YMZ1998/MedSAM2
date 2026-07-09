@@ -59,10 +59,6 @@ DEFAULT_CONFIG_NAME = "sam2.1_hiera_t512"
 DEFAULT_CHECKPOINT_NAME = "MedSAM2_latest"
 
 
-def default_device():
-    return get_torch_status()["device"]
-
-
 def select_default_name(choices, preferred):
     if preferred in choices:
         return preferred
@@ -119,15 +115,6 @@ def get_segmenter(config_name, checkpoint_name, device):
             device=device,
         )
     return SEGMENTER_CACHE[key]
-
-
-def volume_info(volume):
-    spacing = ", ".join(f"{value:.4g}" for value in volume.image.GetSpacing())
-    return (
-        f"Loaded {basename(volume.path)} | "
-        f"shape (D, H, W)={tuple(volume.array.shape)} | "
-        f"spacing ({spacing})"
-    )
 
 
 def format_measurement(value):

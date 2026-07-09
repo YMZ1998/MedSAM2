@@ -1,7 +1,7 @@
 """ViTDet backbone adapted from Detectron2"""
 
 from functools import partial
-from typing import List, Tuple, Union
+from typing import List
 
 import torch
 import torch.nn as nn

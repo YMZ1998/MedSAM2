@@ -4,7 +4,6 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
-import warnings
 from collections import OrderedDict
 
 import torch
@@ -17,7 +16,6 @@ from efficient_track_anything.modeling.efficienttam_base import (
 from efficient_track_anything.utils.misc import (
     concat_points,
     fill_holes_in_mask_scores,
-    load_video_frames,
 )
 
 from tqdm import tqdm

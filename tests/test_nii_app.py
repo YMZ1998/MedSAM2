@@ -1,5 +1,3 @@
-import io
-import os
 import tempfile
 import unittest
 from types import SimpleNamespace
@@ -49,7 +47,6 @@ class NiftiAppTests(unittest.TestCase):
         self.assertFalse(status["available"])
         self.assertEqual(status["device"], "cpu")
         self.assertIn("c10.dll failed", status["error"])
-        self.assertEqual(nii_app.default_device(), "cpu")
 
     def test_canvas_updates_streamlit_so_drawn_box_can_segment(self):
         self.assertTrue(nii_app.CANVAS_REALTIME_UPDATE)

@@ -4,11 +4,10 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
-from typing import List, Optional
+from typing import List
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from efficient_track_anything.modeling.efficienttam_utils import LayerNorm2d
 

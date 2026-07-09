@@ -12,10 +12,8 @@ import torch.distributed
 
 from sam2.modeling.efficienttam_base import EfficientTAMBase
 from sam2.modeling.efficienttam_utils import (
-    get_1d_sine_pe,
     get_next_point,
     sample_box_points,
-    select_closest_cond_frames,
 )
 
 from sam2.utils.misc import concat_points
