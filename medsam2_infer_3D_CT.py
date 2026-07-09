@@ -9,10 +9,10 @@ import pandas as pd
 import numpy as np
 import argparse
 
-from PIL import Image
 import SimpleITK as sitk
 import torch
 import torch.multiprocessing as mp
+from inference_utils import normalize_volume_to_uint8, prepare_video_volume
 from sam2.build_sam import build_sam2_video_predictor_npz
 import SimpleITK as sitk
 from skimage import measure, morphology
@@ -132,29 +132,6 @@ def show_box(box, ax, edgecolor='blue'):
     ax.add_patch(plt.Rectangle((x0, y0), w, h, edgecolor=edgecolor, facecolor=(0,0,0,0), lw=2))     
 
 
-def resize_grayscale_to_rgb_and_resize(array, image_size):
-    """
-    Resize a 3D grayscale NumPy array to an RGB image and then resize it.
-    
-    Parameters:
-        array (np.ndarray): Input array of shape (d, h, w).
-        image_size (int): Desired size for the width and height.
-    
-    Returns:
-        np.ndarray: Resized array of shape (d, 3, image_size, image_size).
-    """
-    d, h, w = array.shape
-    resized_array = np.zeros((d, 3, image_size, image_size))
-    
-    for i in range(d):
-        img_pil = Image.fromarray(array[i].astype(np.uint8))
-        img_rgb = img_pil.convert("RGB")
-        img_resized = img_rgb.resize((image_size, image_size))
-        img_array = np.array(img_resized).transpose(2, 0, 1)  # (3, image_size, image_size)
-        resized_array[i] = img_array
-    
-    return resized_array
-
 def mask2D_to_bbox(gt2D, max_shift=20):
     y_indices, x_indices = np.where(gt2D > 0)
     x_min, x_max = np.min(x_indices), np.max(x_indices)
@@ -213,15 +190,25 @@ for nii_fname in tqdm(nii_fnames):
     ].copy()
 
     segs_3D = np.zeros(nii_image_data.shape, dtype=np.uint8)
+    preprocessed_window_cache = {}
 
     for row_id, row in case_df.iterrows():
         # print(f'Processing {case_name} tumor {tumor_idx}')
         # get the key slice info
         lower_bound, upper_bound = row['DICOM_windows'].split(',')
         lower_bound, upper_bound = float(lower_bound), float(upper_bound)
-        nii_image_data_pre = np.clip(nii_image_data, lower_bound, upper_bound)
-        nii_image_data_pre = (nii_image_data_pre - np.min(nii_image_data_pre))/(np.max(nii_image_data_pre)-np.min(nii_image_data_pre))*255.0
-        nii_image_data_pre = np.uint8(nii_image_data_pre)
+        window_key = (lower_bound, upper_bound)
+        if window_key not in preprocessed_window_cache:
+            nii_image_data_pre = normalize_volume_to_uint8(
+                np.clip(nii_image_data, lower_bound, upper_bound)
+            )
+            img_resized = prepare_video_volume(
+                nii_image_data_pre,
+                image_size=512,
+                device=predictor.device,
+            )
+            preprocessed_window_cache[window_key] = (nii_image_data_pre, img_resized)
+        img_3D_ori, img_resized = preprocessed_window_cache[window_key]
         key_slice_idx = row['Key_slice_index']
         key_slice_idx = int(key_slice_idx)
         slice_range = row['Slice_range']
@@ -235,23 +222,9 @@ for nii_fname in tqdm(nii_fnames):
         bbox = np.array([bbox[1], bbox[0], bbox[3], bbox[2]])
 
         key_slice_idx_offset = key_slice_idx - slice_idx_start
-        key_slice_img = nii_image_data_pre[key_slice_idx_offset, :,:]
-
-        img_3D_ori = nii_image_data_pre
         assert np.max(img_3D_ori) < 256, f'input data should be in range [0, 255], but got {np.unique(img_3D_ori)}'
 
-        video_height = key_slice_img.shape[0]
-        video_width = key_slice_img.shape[1]
-        img_resized = resize_grayscale_to_rgb_and_resize(img_3D_ori, 512)
-        img_resized = img_resized / 255.0
-        img_resized = torch.from_numpy(img_resized).cuda()
-        img_mean=(0.485, 0.456, 0.406)
-        img_std=(0.229, 0.224, 0.225)
-        img_mean = torch.tensor(img_mean, dtype=torch.float32)[:, None, None].cuda()
-        img_std = torch.tensor(img_std, dtype=torch.float32)[:, None, None].cuda()
-        img_resized -= img_mean
-        img_resized /= img_std
-        z_mids = []
+        video_height, video_width = img_3D_ori.shape[1:3]
 
         with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
             inference_state = predictor.init_state(img_resized, video_height, video_width)
@@ -297,8 +270,8 @@ for nii_fname in tqdm(nii_fnames):
         seg_info['key_slice_index'].append(key_slice_idx)
         seg_info['DICOM_windows'].append(row['DICOM_windows'])
 
-    seg_info_df = pd.DataFrame(seg_info)
-    seg_info_df.to_csv(join(pred_save_dir, 'tiny_seg_info202412.csv'), index=False)
+seg_info_df = pd.DataFrame(seg_info)
+seg_info_df.to_csv(join(pred_save_dir, 'tiny_seg_info202412.csv'), index=False)
 
 
 

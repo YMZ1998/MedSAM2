@@ -14,6 +14,7 @@ else
 fi
 # Define the base URL for MedSAM2 models on Hugging Face
 HF_BASE_URL="https://huggingface.co/wanglab/MedSAM2/resolve/main"
+
 # Define the model checkpoint files (as separate variables instead of an array)
 MODEL1="MedSAM2_2411.pt"
 MODEL2="MedSAM2_US_Heart.pt"

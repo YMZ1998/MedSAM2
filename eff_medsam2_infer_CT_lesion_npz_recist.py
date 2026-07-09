@@ -25,10 +25,10 @@ import argparse
 from datetime import datetime
 import time
 
-from PIL import Image
 import SimpleITK as sitk
 import torch
 import torch.multiprocessing as mp
+from inference_utils import prepare_video_volume
 from huggingface_hub import hf_hub_download
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -191,30 +191,6 @@ def show_box(box, ax, edgecolor='blue'):
     ax.add_patch(plt.Rectangle((x0, y0), w, h, edgecolor=edgecolor, facecolor=(0,0,0,0), lw=2))     
 
 
-def resize_grayscale_to_rgb_and_resize(array, image_size):
-    """
-    Resize a 3D grayscale NumPy array to an RGB image and then resize it.
-    
-    Parameters:
-        array (np.ndarray): Input array of shape (d, h, w).
-        image_size (int): Desired size for the width and height.
-    
-    Returns:
-        np.ndarray: Resized array of shape (d, 3, image_size, image_size).
-    """
-    d, h, w = array.shape
-    resized_array = np.zeros((d, 3, image_size, image_size))
-    
-    for i in range(d):
-        img_pil = Image.fromarray(array[i].astype(np.uint8))
-        img_rgb = img_pil.convert("RGB")
-        img_resized = img_rgb.resize((image_size, image_size))
-        img_array = np.array(img_resized).transpose(2, 0, 1)  # (3, image_size, image_size)
-        resized_array[i] = img_array
-    
-    return resized_array
-
-
 def sample_points_in_bbox_grid(bbox: np.ndarray, n: int) -> np.ndarray:
     """
     Uniformly sample n grid-aligned (x, y) points inside the bbox.
@@ -348,18 +324,11 @@ def infer_3d(img_npz_file):
     video_height = img_3D_ori.shape[1]
     video_width = img_3D_ori.shape[2]
 
-    if video_height != 512 or video_width != 512:
-        img_resized = resize_grayscale_to_rgb_and_resize(img_3D_ori, 512)  #d, 3, 512, 512
-    else:
-        img_resized = img_3D_ori[:,None].repeat(3, axis=1) # d, 3, 512, 512
-    img_resized = img_resized / 255.0
-    img_resized = torch.from_numpy(img_resized)
-    img_mean=(0.485, 0.456, 0.406)
-    img_std=(0.229, 0.224, 0.225)
-    img_mean = torch.tensor(img_mean, dtype=torch.float32)[:, None, None]
-    img_std = torch.tensor(img_std, dtype=torch.float32)[:, None, None]
-    img_resized -= img_mean
-    img_resized /= img_std
+    img_resized = prepare_video_volume(
+        img_3D_ori,
+        image_size=512,
+        device=predictor.device,
+    )
 
     boxes_3D_ori = []
     for j, ulab in enumerate(unique_labs):

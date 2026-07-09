@@ -255,10 +255,9 @@ def vos_inference(
             "in the first frame (such as LVOS or YouTube-VOS)."
         )
     
-    # run propagation throughout the video and collect the results in a dict
+    # run propagation throughout the video and write each frame immediately
     os.makedirs(os.path.join(output_mask_dir, video_name), exist_ok=True)
     output_palette = input_palette or DAVIS_PALETTE
-    video_segments = {}  # video_segments contains the per-frame segmentation results
 
     for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(
         inference_state
@@ -267,10 +266,6 @@ def vos_inference(
             out_obj_id: (out_mask_logits[i] > score_thresh).cpu().numpy()
             for i, out_obj_id in enumerate(out_obj_ids)
         }
-        video_segments[out_frame_idx] = per_obj_output_mask
-
-    # write the output masks as palette PNG files to output_mask_dir
-    for out_frame_idx, per_obj_output_mask in video_segments.items():
         if save_palette_png:
             # save palette PNG prediction results
             save_palette_masks_to_dir(
