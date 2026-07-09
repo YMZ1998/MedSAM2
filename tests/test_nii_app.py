@@ -75,9 +75,14 @@ class NiftiAppTests(unittest.TestCase):
         self.assertEqual(items[0], ("Case", "ct.nii.gz", "Loaded"))
         self.assertIn(("Dimensions", "162 x 512 x 512", "(D x H x W)"), items)
         self.assertIn(("Spacing", "0.8 x 0.8 x 2", "mm"), items)
+        self.assertIn(("Voxel Count", "42,467,328", "voxels"), items)
         self.assertIn(("Slice", "81 / 161", "Current axial index"), items)
         self.assertIn(("Device", "CUDA", "Ready"), items)
         self.assertIn(("Model", "sam2.1_hiera_t512", "Checkpoint selected"), items)
+
+    def test_thumbnail_indices_centers_current_slice(self):
+        self.assertEqual(nii_app.thumbnail_indices(81, 162), [78, 79, 80, 81, 82, 83, 84])
+        self.assertEqual(nii_app.thumbnail_indices(1, 5), [0, 1, 2, 3, 4])
 
     def test_mask_summary_calculates_volume_voxels_and_coverage(self):
         mask = nii_app.np.zeros((2, 4, 4), dtype=nii_app.np.uint8)
