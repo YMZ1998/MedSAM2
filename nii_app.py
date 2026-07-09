@@ -1,20 +1,24 @@
 import os
+import importlib
 import tempfile
+from functools import lru_cache
 from glob import glob
 from os.path import basename, splitext
 
 import numpy as np
+from PIL import Image
 
 from nii_inference import (
     NiftiSegmenter,
     load_nifti_volume,
-    mask_to_bbox,
     overlay_mask_on_slice,
     save_mask_nifti,
+    validate_nifti_path,
 )
 
 
 SEGMENTER_CACHE = {}
+CANVAS_REALTIME_UPDATE = True
 
 
 def strip_nii_gz(filename):
@@ -51,15 +55,54 @@ def build_config_map(paths):
 
 CONFIG_MAP = build_config_map(discover_files(os.path.join("sam2", "configs"), "*.yaml"))
 CHECKPOINT_MAP = build_file_map(discover_files("checkpoints", "*.pt"))
+DEFAULT_CONFIG_NAME = "sam2.1_hiera_t512"
+DEFAULT_CHECKPOINT_NAME = "MedSAM2_latest"
 
 
 def default_device():
-    try:
-        import torch
+    return get_torch_status()["device"]
 
-        return "cuda" if torch.cuda.is_available() else "cpu"
-    except Exception:
-        return "cuda"
+
+def select_default_name(choices, preferred):
+    if preferred in choices:
+        return preferred
+    if not choices:
+        raise ValueError("No choices are available.")
+    return choices[0]
+
+
+@lru_cache(maxsize=1)
+def get_torch_status():
+    try:
+        torch = importlib.import_module("torch")
+        cuda_available = bool(torch.cuda.is_available())
+        return {
+            "available": True,
+            "device": "cuda" if cuda_available else "cpu",
+            "error": "",
+            "version": getattr(torch, "__version__", "unknown"),
+            "cuda_available": cuda_available,
+        }
+    except Exception as exc:
+        return {
+            "available": False,
+            "device": "cpu",
+            "error": str(exc),
+            "version": "",
+            "cuda_available": False,
+        }
+
+
+def materialize_uploaded_nifti(uploaded_file, output_dir):
+    if uploaded_file is None:
+        raise ValueError("Upload a .nii.gz file first.")
+    validate_nifti_path(uploaded_file.name)
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, basename(uploaded_file.name))
+    payload = uploaded_file.getbuffer()
+    with open(output_path, "wb") as handle:
+        handle.write(payload)
+    return output_path
 
 
 def get_segmenter(config_name, checkpoint_name, device):
@@ -81,10 +124,20 @@ def get_segmenter(config_name, checkpoint_name, device):
 def volume_info(volume):
     spacing = ", ".join(f"{value:.4g}" for value in volume.image.GetSpacing())
     return (
-        f"Loaded `{basename(volume.path)}` | "
-        f"shape `(D, H, W)={tuple(volume.array.shape)}` | "
-        f"spacing `({spacing})`"
+        f"Loaded {basename(volume.path)} | "
+        f"shape (D, H, W)={tuple(volume.array.shape)} | "
+        f"spacing ({spacing})"
     )
+
+
+def create_session_state(volume):
+    return {
+        "volume": volume,
+        "mask": np.zeros(volume.array.shape, dtype=np.uint8),
+        "output_dir": tempfile.mkdtemp(prefix="medsam2_nii_"),
+        "output_path": None,
+        "last_bbox": None,
+    }
 
 
 def image_for_slice(state, slice_idx, with_mask=True):
@@ -96,217 +149,246 @@ def image_for_slice(state, slice_idx, with_mask=True):
     return np.repeat(image_slice[..., None], 3, axis=-1)
 
 
-def load_volume(input_file):
-    if input_file is None:
-        return None, None, None, 0, "Upload a `.nii.gz` file to begin.", None
-
-    input_path = input_file if isinstance(input_file, str) else input_file.name
-    volume = load_nifti_volume(input_path)
-    depth = int(volume.array.shape[0])
-    slice_idx = depth // 2
-    state = {
-        "volume": volume,
-        "mask": np.zeros(volume.array.shape, dtype=np.uint8),
-        "output_dir": tempfile.mkdtemp(prefix="medsam2_nii_"),
-        "output_path": None,
-        "last_bbox": None,
-    }
-    preview = image_for_slice(state, slice_idx, with_mask=True)
-    prompt_image = image_for_slice(state, slice_idx, with_mask=False)
-    return (
-        state,
-        prompt_image,
-        preview,
-        slice_idx,
-        volume_info(volume),
-        None,
-    )
+def compute_display_size(image_shape, max_width=768):
+    height, width = image_shape[:2]
+    if width <= max_width:
+        return width, height
+    scale = max_width / float(width)
+    return max(1, int(width * scale)), max(1, int(height * scale))
 
 
-def update_slice(state, slice_idx):
-    if state is None:
-        return None, None, "Upload a `.nii.gz` file first."
-    return (
-        image_for_slice(state, slice_idx, with_mask=False),
-        image_for_slice(state, slice_idx, with_mask=True),
-        volume_info(state["volume"]),
-    )
+def bbox_from_canvas(canvas_json, display_size, source_shape):
+    objects = (canvas_json or {}).get("objects") or []
+    if not objects:
+        raise ValueError("Draw a rectangle over the target before segmenting.")
+
+    item = objects[-1]
+    if item.get("type") != "rect":
+        raise ValueError("Use the rectangle drawing mode to mark the target.")
+
+    display_width, display_height = display_size
+    source_height, source_width = source_shape[:2]
+    scale_x = source_width / float(display_width)
+    scale_y = source_height / float(display_height)
+
+    left = float(item.get("left", 0.0))
+    top = float(item.get("top", 0.0))
+    width = float(item.get("width", 0.0)) * float(item.get("scaleX", 1.0))
+    height = float(item.get("height", 0.0)) * float(item.get("scaleY", 1.0))
+
+    x0 = int(max(0, min(source_width - 1, round(left * scale_x))))
+    y0 = int(max(0, min(source_height - 1, round(top * scale_y))))
+    x1 = int(max(0, min(source_width - 1, round((left + width) * scale_x))))
+    y1 = int(max(0, min(source_height - 1, round((top + height) * scale_y))))
+    if x1 <= x0 or y1 <= y0:
+        raise ValueError("The rectangle prompt is too small.")
+    return np.array([x0, y0, x1, y1], dtype=np.int64)
 
 
-def extract_drawn_mask(drawing_board):
-    if drawing_board is None:
-        raise ValueError("Draw a prompt before segmenting.")
-    if isinstance(drawing_board, dict):
-        mask = drawing_board.get("mask")
-    else:
-        mask = None
-    if mask is None:
-        raise ValueError("Draw a prompt before segmenting.")
-    return mask
-
-
-def segment_current_slice(state, drawing_board, slice_idx, config_name, checkpoint_name, device):
-    if state is None:
-        return None, None, None, "Upload a `.nii.gz` file first."
-
-    try:
-        prompt_mask = extract_drawn_mask(drawing_board)
-        bbox = mask_to_bbox(prompt_mask)
-        segmenter = get_segmenter(config_name, checkpoint_name, device)
-        volume = state["volume"]
-        mask = segmenter.segment_with_box(volume, int(slice_idx), bbox)
-        output_name = f"{strip_nii_gz(volume.path)}_mask.nii.gz"
-        output_path = os.path.join(state["output_dir"], output_name)
-        save_mask_nifti(mask, volume, output_path)
-
-        state["mask"] = mask
-        state["output_path"] = output_path
-        state["last_bbox"] = bbox.tolist()
-        status = (
-            f"Segmentation complete on slice `{int(slice_idx)}` "
-            f"with box `{state['last_bbox']}`."
+def segment_current_slice(state, bbox, slice_idx, config_name, checkpoint_name, device):
+    torch_status = get_torch_status()
+    if not torch_status["available"]:
+        raise RuntimeError(
+            "PyTorch is not available in the Python environment running Streamlit. "
+            f"Start this app from a MedSAM2 environment with working torch. Details: {torch_status['error']}"
         )
-        return state, image_for_slice(state, slice_idx, with_mask=True), output_path, status
-    except Exception as exc:
-        return state, image_for_slice(state, slice_idx, with_mask=True), state.get("output_path"), f"Error: {exc}"
+    segmenter = get_segmenter(config_name, checkpoint_name, device)
+    volume = state["volume"]
+    mask = segmenter.segment_with_box(volume, int(slice_idx), bbox)
+    output_name = f"{strip_nii_gz(volume.path)}_mask.nii.gz"
+    output_path = os.path.join(state["output_dir"], output_name)
+    save_mask_nifti(mask, volume, output_path)
+    state["mask"] = mask
+    state["output_path"] = output_path
+    state["last_bbox"] = [int(value) for value in bbox]
+    return output_path
 
 
-def reset_mask(state, slice_idx):
-    if state is None:
-        return None, None, None, "Upload a `.nii.gz` file first."
+def reset_mask(state):
     state["mask"] = np.zeros(state["volume"].array.shape, dtype=np.uint8)
     state["output_path"] = None
     state["last_bbox"] = None
-    return (
-        state,
-        image_for_slice(state, slice_idx, with_mask=False),
-        image_for_slice(state, slice_idx, with_mask=True),
-        "Mask reset.",
-    )
 
 
-def build_app():
-    import gradio as gr
+def get_streamlit_canvas():
+    try:
+        from streamlit_drawable_canvas import st_canvas
+
+        return st_canvas
+    except Exception:
+        return None
+
+
+def main():
+    import streamlit as st
+
+    st.set_page_config(page_title="MedSAM2 NIfTI Segmentation", layout="wide")
+    st.title("MedSAM2 NIfTI Interactive Segmentation")
 
     if not CONFIG_MAP:
-        raise RuntimeError("No config files found under sam2/configs.")
+        st.error("No config files found under sam2/configs.")
+        st.stop()
     if not CHECKPOINT_MAP:
-        raise RuntimeError("No checkpoint files found under checkpoints.")
+        st.error("No checkpoint files found under checkpoints.")
+        st.stop()
 
-    config_choices = list(CONFIG_MAP.keys())
-    checkpoint_choices = list(CHECKPOINT_MAP.keys())
-    css = """
-    #nii_prompt img, #nii_preview img { image-rendering: auto; }
-    .status-text { font-size: 0.95rem; }
-    """
+    if "nii_state" not in st.session_state:
+        st.session_state.nii_state = None
+    if "upload_workspace" not in st.session_state:
+        st.session_state.upload_workspace = tempfile.mkdtemp(prefix="medsam2_upload_")
 
-    with gr.Blocks(css=css) as app:
-        gr.Markdown(
-            """
-            # MedSAM2 NIfTI Interactive Segmentation
+    torch_status = get_torch_status()
+    if torch_status["available"]:
+        st.sidebar.success(
+            f"PyTorch {torch_status['version']} | default device: {torch_status['device']}"
+        )
+    else:
+        st.sidebar.error("PyTorch failed to load. Segmentation is disabled in this Python environment.")
+        with st.sidebar.expander("PyTorch error"):
+            st.code(torch_status["error"])
 
-            Upload a `.nii.gz` volume, choose a slice, draw over the target, and run 3D propagation.
-            """
+    with st.sidebar:
+        uploaded_file = st.file_uploader("Input NIfTI (.nii.gz)")
+        config_choices = list(CONFIG_MAP.keys())
+        checkpoint_choices = list(CHECKPOINT_MAP.keys())
+        default_config = select_default_name(config_choices, DEFAULT_CONFIG_NAME)
+        default_checkpoint = select_default_name(checkpoint_choices, DEFAULT_CHECKPOINT_NAME)
+        config_name = st.selectbox(
+            "Config",
+            config_choices,
+            index=config_choices.index(default_config),
+        )
+        checkpoint_name = st.selectbox(
+            "Checkpoint",
+            checkpoint_choices,
+            index=checkpoint_choices.index(default_checkpoint),
+        )
+        device = st.selectbox(
+            "Device",
+            ["cuda", "cpu"],
+            index=0 if torch_status["device"] == "cuda" else 1,
+            disabled=not torch_status["available"],
         )
 
-        state = gr.State(None)
+        if uploaded_file is not None:
+            current_name = st.session_state.get("loaded_upload_name")
+            if current_name != uploaded_file.name:
+                try:
+                    input_path = materialize_uploaded_nifti(
+                        uploaded_file,
+                        st.session_state.upload_workspace,
+                    )
+                    st.session_state.nii_state = create_session_state(load_nifti_volume(input_path))
+                    st.session_state.loaded_upload_name = uploaded_file.name
+                    st.session_state.slice_idx = st.session_state.nii_state["volume"].array.shape[0] // 2
+                    st.success("Volume loaded.")
+                except Exception as exc:
+                    st.session_state.nii_state = None
+                    st.error(str(exc))
 
-        with gr.Row():
-            with gr.Column(scale=1):
-                input_file = gr.File(
-                    label="Input NIfTI (.nii.gz)",
-                    file_types=[".nii.gz"],
-                )
-                config_dropdown = gr.Dropdown(
-                    choices=config_choices,
-                    value=config_choices[0],
-                    label="Config",
-                )
-                checkpoint_dropdown = gr.Dropdown(
-                    choices=checkpoint_choices,
-                    value=checkpoint_choices[0],
-                    label="Checkpoint",
-                )
-                device_dropdown = gr.Dropdown(
-                    choices=["cuda", "cpu"],
-                    value=default_device(),
-                    label="Device",
-                )
-                slice_slider = gr.Slider(
-                    minimum=0,
-                    maximum=1,
-                    step=1,
-                    value=0,
-                    label="Slice index",
-                    interactive=True,
-                )
-                with gr.Row():
-                    segment_button = gr.Button("Segment", variant="primary")
-                    reset_button = gr.Button("Reset Mask")
-                output_file = gr.File(label="Predicted mask (.nii.gz)")
-                status = gr.Markdown("Upload a `.nii.gz` file to begin.")
+        if st.session_state.nii_state is not None and st.button("Reset Mask"):
+            reset_mask(st.session_state.nii_state)
+            st.info("Mask reset.")
 
-            with gr.Column(scale=1):
-                prompt_image = gr.Image(
-                    label="Prompt slice",
-                    tool="sketch",
-                    type="numpy",
-                    elem_id="nii_prompt",
-                )
-                preview_image = gr.Image(
-                    label="Mask overlay",
-                    type="numpy",
-                    elem_id="nii_preview",
-                )
+    state = st.session_state.nii_state
+    if state is None:
+        st.info("Upload a .nii.gz volume from the sidebar to begin.")
+        return
 
-        def handle_load(input_file):
-            loaded_state, prompt, preview, slice_idx, message, output_path = load_volume(input_file)
-            max_slice = 1
-            if loaded_state is not None:
-                max_slice = max(0, loaded_state["volume"].array.shape[0] - 1)
-            return (
-                loaded_state,
-                prompt,
-                preview,
-                gr.Slider.update(maximum=max_slice, value=slice_idx),
-                message,
-                output_path,
+    volume = state["volume"]
+    st.caption(volume_info(volume))
+
+    max_slice = int(volume.array.shape[0] - 1)
+    slice_idx = st.slider(
+        "Slice index",
+        min_value=0,
+        max_value=max_slice,
+        value=int(st.session_state.get("slice_idx", max_slice // 2)),
+        step=1,
+        key="slice_idx",
+    )
+
+    prompt_rgb = image_for_slice(state, slice_idx, with_mask=False)
+    overlay_rgb = image_for_slice(state, slice_idx, with_mask=True)
+    display_size = compute_display_size(prompt_rgb.shape)
+    display_width, display_height = display_size
+
+    prompt_col, overlay_col = st.columns(2)
+    with prompt_col:
+        st.subheader("Prompt")
+        st.caption("Draw one rectangle around the target. Wait for Current box to appear before clicking Segment.")
+        st_canvas = get_streamlit_canvas()
+        bbox = None
+        if st_canvas is not None:
+            canvas_result = st_canvas(
+                fill_color="rgba(255, 80, 40, 0.25)",
+                stroke_width=2,
+                stroke_color="#ff5028",
+                background_image=Image.fromarray(prompt_rgb),
+                drawing_mode="rect",
+                width=display_width,
+                height=display_height,
+                update_streamlit=CANVAS_REALTIME_UPDATE,
+                key=f"canvas_{slice_idx}",
             )
+            if canvas_result.json_data:
+                try:
+                    bbox = bbox_from_canvas(
+                        canvas_result.json_data,
+                        display_size=display_size,
+                        source_shape=prompt_rgb.shape,
+                    )
+                    st.caption(f"Current box: {bbox.tolist()}")
+                except ValueError as exc:
+                    st.warning(str(exc))
+        else:
+            st.image(prompt_rgb, caption="Install streamlit-drawable-canvas for drawing.")
+            st.warning("streamlit-drawable-canvas is not installed. Enter a box manually.")
+            height, width = prompt_rgb.shape[:2]
+            x0 = st.number_input("x_min", min_value=0, max_value=width - 1, value=0)
+            y0 = st.number_input("y_min", min_value=0, max_value=height - 1, value=0)
+            x1 = st.number_input("x_max", min_value=0, max_value=width - 1, value=width - 1)
+            y1 = st.number_input("y_max", min_value=0, max_value=height - 1, value=height - 1)
+            if x1 > x0 and y1 > y0:
+                bbox = np.array([x0, y0, x1, y1], dtype=np.int64)
 
-        input_file.change(
-            fn=handle_load,
-            inputs=[input_file],
-            outputs=[state, prompt_image, preview_image, slice_slider, status, output_file],
-        )
-        slice_slider.release(
-            fn=update_slice,
-            inputs=[state, slice_slider],
-            outputs=[prompt_image, preview_image, status],
-        )
-        segment_button.click(
-            fn=segment_current_slice,
-            inputs=[
-                state,
-                prompt_image,
-                slice_slider,
-                config_dropdown,
-                checkpoint_dropdown,
-                device_dropdown,
-            ],
-            outputs=[state, preview_image, output_file, status],
-        )
-        reset_button.click(
-            fn=reset_mask,
-            inputs=[state, slice_slider],
-            outputs=[state, prompt_image, preview_image, status],
-        )
+        if st.button("Segment", type="primary", disabled=not torch_status["available"]):
+            if bbox is None:
+                st.error("Draw a rectangle or enter a valid box first.")
+            else:
+                with st.spinner("Running MedSAM2 propagation..."):
+                    try:
+                        output_path = segment_current_slice(
+                            state,
+                            bbox,
+                            slice_idx,
+                            config_name,
+                            checkpoint_name,
+                            device,
+                        )
+                        st.success(f"Segmentation complete. Box: {state['last_bbox']}")
+                        with open(output_path, "rb") as handle:
+                            st.download_button(
+                                "Download mask (.nii.gz)",
+                                data=handle,
+                                file_name=basename(output_path),
+                                mime="application/gzip",
+                            )
+                    except Exception as exc:
+                        st.error(str(exc))
 
-    return app
+    with overlay_col:
+        st.subheader("Mask overlay")
+        st.image(overlay_rgb, caption="Current slice overlay")
+        if state.get("output_path") and os.path.exists(state["output_path"]):
+            with open(state["output_path"], "rb") as handle:
+                st.download_button(
+                    "Download latest mask (.nii.gz)",
+                    data=handle,
+                    file_name=basename(state["output_path"]),
+                    mime="application/gzip",
+                )
 
 
 if __name__ == "__main__":
-    build_app().queue(concurrency_count=1).launch(
-        share=False,
-        server_name="127.0.0.1",
-        server_port=18863,
-    )
+    main()

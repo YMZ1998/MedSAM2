@@ -48,6 +48,8 @@ EXTRA_PACKAGES = {
         "gunicorn>=23.0.0",
         "imagesize>=1.4.1",
         "pycocotools>=2.0.8",
+        "streamlit>=1.30.0,<1.40.0",
+        "streamlit-drawable-canvas>=0.9.3",
         "strawberry-graphql>=0.239.2",
     ],
     "dev": [
