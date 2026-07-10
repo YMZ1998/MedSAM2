@@ -129,7 +129,7 @@ def case_summary_items(volume, slice_idx, torch_status, config_name):
     device_detail = "Ready" if torch_status["available"] else "Unavailable"
     return [
         ("Case", basename(volume.path), "Loaded"),
-        ("Dimensions", f"{depth} x {height} x {width}", "(D x H x W)"),
+        ("Dimensions", f"{depth} x {height} x {width}", "(H x W x D)"),
         (
             "Spacing",
             " x ".join(format_measurement(value) for value in spacing),
@@ -204,7 +204,7 @@ def product_css():
         width: 310px;
     }
     [data-testid="stSidebar"] section {
-        padding-top: 18px;
+        padding-top: 8px;
     }
     [data-testid="stSidebarCollapseButton"],
     button[title="Close sidebar"],
@@ -227,7 +227,7 @@ def product_css():
         display: flex;
         align-items: center;
         gap: 12px;
-        margin: 4px 0 26px;
+        margin: 0 0 18px;
     }
     .med-logo {
         width: 50px;
@@ -262,7 +262,7 @@ def product_css():
         font-weight: 800;
         letter-spacing: 0.08em;
         text-transform: uppercase;
-        margin: 20px 0 12px;
+        margin: 14px 0 8px;
     }
     .med-section-label:after {
         content: "";
@@ -314,7 +314,7 @@ def product_css():
         background: #e5f5ea;
         border-radius: 8px;
         padding: 11px 12px;
-        margin: 12px 0 18px;
+        margin: 8px 0 10px;
         color: #126337;
         font-size: 0.86rem;
         font-weight: 650;
@@ -555,8 +555,18 @@ def product_css():
     .stDownloadButton > button {
         border-radius: 7px;
         font-weight: 750;
-        min-height: 2.55rem;
+        min-height: 2.4rem;
         width: 100%;
+    }
+    [data-testid="stSidebar"] [data-testid="stSelectbox"] {
+        margin-bottom: -8px;
+    }
+    [data-testid="stSidebar"] [data-testid="stFileUploader"] {
+        margin-bottom: -8px;
+    }
+    [data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] {
+        padding: 14px 14px;
+        min-height: 116px;
     }
     .stButton > button[kind="primary"] {
         background: var(--med-blue);
@@ -652,8 +662,13 @@ def render_viewer_title(step, title):
 
 
 def render_thumbnail_strip(indices, active_idx):
+    if not indices:
+        indices = ["-"] * 7
     thumbs = ['<div class="med-thumb-nav">‹</div>']
     for idx in indices:
+        if idx == "-":
+            thumbs.append('<div class="med-thumb">-</div>')
+            continue
         active = " active" if int(idx) == int(active_idx) else ""
         thumbs.append(f'<div class="med-thumb{active}">{int(idx)}</div>')
     thumbs.append('<div class="med-thumb-nav">›</div>')
@@ -870,7 +885,7 @@ def main():
         segment_disabled = st.session_state.nii_state is None or not torch_status["available"]
         if st.button("Segment", type="primary", disabled=segment_disabled):
             st.session_state.segment_requested = True
-        if st.session_state.nii_state is not None and st.button("Reset Mask"):
+        if st.button("Reset", disabled=st.session_state.nii_state is None):
             reset_mask(st.session_state.nii_state)
             st.session_state.current_bbox = None
             st.info("Mask reset.")

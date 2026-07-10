@@ -73,7 +73,7 @@ class NiftiAppTests(unittest.TestCase):
         items = nii_app.case_summary_items(volume, 81, torch_status, "sam2.1_hiera_t512")
 
         self.assertEqual(items[0], ("Case", "ct.nii.gz", "Loaded"))
-        self.assertIn(("Dimensions", "162 x 512 x 512", "(D x H x W)"), items)
+        self.assertIn(("Dimensions", "162 x 512 x 512", "(H x W x D)"), items)
         self.assertIn(("Spacing", "0.8 x 0.8 x 2", "mm"), items)
         self.assertIn(("Voxel Count", "42,467,328", "voxels"), items)
         self.assertIn(("Slice", "81 / 161", "Current axial index"), items)
