@@ -73,12 +73,12 @@ class NiftiAppTests(unittest.TestCase):
         items = nii_app.case_summary_items(volume, 81, torch_status, "sam2.1_hiera_t512")
 
         self.assertEqual(items[0], ("Case", "ct.nii.gz", "Loaded"))
-        self.assertIn(("Dimensions", "162 x 512 x 512", "(H x W x D)"), items)
+        self.assertIn(("Dimensions", "162 x 512 x 512", "D x H x W"), items)
         self.assertIn(("Spacing", "0.8 x 0.8 x 2", "mm"), items)
         self.assertIn(("Voxel Count", "42,467,328", "voxels"), items)
-        self.assertIn(("Slice", "81 / 161", "Current axial index"), items)
+        self.assertIn(("Slice", "81 / 161", "Axial index"), items)
         self.assertIn(("Device", "CUDA", "Ready"), items)
-        self.assertIn(("Model", "sam2.1_hiera_t512", "Checkpoint selected"), items)
+        self.assertIn(("Model", "sam2.1_hiera_t512", "Ready"), items)
 
     def test_thumbnail_indices_centers_current_slice(self):
         self.assertEqual(nii_app.thumbnail_indices(81, 162), [78, 79, 80, 81, 82, 83, 84])
@@ -97,6 +97,28 @@ class NiftiAppTests(unittest.TestCase):
         self.assertEqual(summary["voxels"], 8)
         self.assertEqual(summary["volume_cm3"], 0.016)
         self.assertEqual(summary["coverage"], 25.0)
+
+    def test_window_slice_to_uint8_clips_to_requested_window(self):
+        image = nii_app.np.array([[-100.0, 0.0, 100.0]], dtype=nii_app.np.float32)
+
+        result = nii_app.window_slice_to_uint8(image, center=0.0, width=100.0)
+
+        self.assertEqual(result.tolist(), [[0, 127, 255]])
+
+    def test_set_slice_clamps_index_and_clears_stale_prompt(self):
+        fake_st = SimpleNamespace(
+            session_state=SimpleNamespace(
+                slice_idx=5,
+                current_bbox=nii_app.np.array([1, 2, 3, 4]),
+                bbox_slice=5,
+            )
+        )
+
+        nii_app.set_slice(fake_st, 99, max_slice=10)
+
+        self.assertEqual(fake_st.session_state.slice_idx, 10)
+        self.assertIsNone(fake_st.session_state.current_bbox)
+        self.assertIsNone(fake_st.session_state.bbox_slice)
 
 
 if __name__ == "__main__":

@@ -53,6 +53,21 @@ pip install ffmpeg-python
 pip install moviepy
 ```
 
+## NIfTI Studio
+
+The Streamlit application supports `.nii.gz` volume upload, axial slice navigation,
+rectangle prompts, full-volume MedSAM2 propagation, mask review, and NIfTI export.
+
+Install the interactive application dependencies and start it from the MIR environment:
+
+```bash
+conda run -n MIR pip install -e ".[interactive-demo]"
+conda run -n MIR python -m streamlit run nii_app.py --server.address 127.0.0.1 --server.port 18864
+```
+
+Open `http://127.0.0.1:18864/`, upload a `.nii.gz` study, select an axial slice,
+draw one rectangle around the target, and click **Run segmentation**.
+
 ## Download annotated datasets
 
 - [CT_DeepLesion-MedSAM2](https://huggingface.co/datasets/wanglab/CT_DeepLesion-MedSAM2)
